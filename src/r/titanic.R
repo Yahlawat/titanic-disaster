@@ -54,64 +54,73 @@ get_title <- function(names) {
 
 # fill values come from the training rows only, so nothing leaks in from held-out or test
 # age is filled with the median for that title (a Master is a boy, a Mr is an adult man)
-age_by_title <- train_part %>%
-  mutate(Title = get_title(Name)) %>%
-  group_by(Title) %>%
-  summarise(title_age = median(Age, na.rm = TRUE))
-fare_median <- median(train_part$Fare, na.rm = TRUE)
-embarked_mode <- names(which.max(table(train_part$Embarked)))
-cat("\nfill values from the training rows:\n")
-cat("  median Age by title:", paste(age_by_title$Title, age_by_title$title_age, sep = " = ", collapse = ", "), "\n")
-cat("  Fare median = ", round(fare_median, 4), ", Embarked mode = ", embarked_mode, "\n", sep = "")
+get_fill_values <- function(df) {
+  list(
+    age_by_title = df %>%
+      mutate(Title = get_title(Name)) %>%
+      group_by(Title) %>%
+      summarise(title_age = median(Age, na.rm = TRUE)),
+    fare_median = median(df$Fare, na.rm = TRUE),
+    embarked_mode = names(which.max(table(df$Embarked)))
+  )
+}
 
-# same changes for every dataset
-clean <- function(df, name) {
-  cat("\ncleaning ", name, ", starting shape ", nrow(df), " x ", ncol(df), "\n", sep = "")
+fills <- get_fill_values(train_part)
+cat("\nfill values from the training rows:\n")
+cat("  median Age by title:",
+    paste(fills$age_by_title$Title, fills$age_by_title$title_age, sep = " = ", collapse = ", "), "\n")
+cat("  Fare median = ", round(fills$fare_median, 4), ", Embarked mode = ", fills$embarked_mode, "\n", sep = "")
+
+# same changes for every dataset (verbose = FALSE keeps the cross-validation loop quiet)
+clean <- function(df, name, fills, verbose = TRUE) {
+  say <- function(...) if (verbose) cat(...)
+
+  say("\ncleaning ", name, ", starting shape ", nrow(df), " x ", ncol(df), "\n", sep = "")
 
   df <- df %>% mutate(HasCabin = as.integer(!is.na(Cabin)))
-  cat("  added HasCabin (1 if cabin known):", sum(df$HasCabin), "of", nrow(df), "rows\n")
+  say("  added HasCabin (1 if cabin known):", sum(df$HasCabin), "of", nrow(df), "rows\n")
 
   df <- df %>% mutate(Title = get_title(Name))
   title_counts <- table(df$Title)
-  cat("  added Title from Name:", paste(names(title_counts), title_counts, sep = " = ", collapse = ", "), "\n")
+  say("  added Title from Name:", paste(names(title_counts), title_counts, sep = " = ", collapse = ", "), "\n")
 
   df <- df %>% mutate(FamilySize = SibSp + Parch + 1)
-  cat("  added FamilySize = SibSp + Parch + 1 (range ", min(df$FamilySize), " to ", max(df$FamilySize), ")\n", sep = "")
+  say("  added FamilySize = SibSp + Parch + 1 (range ", min(df$FamilySize), " to ", max(df$FamilySize), ")\n", sep = "")
 
   df <- df %>% select(-Name, -Ticket, -Cabin)
-  cat("  dropped Name, Ticket, Cabin (free text, Cabin mostly missing)\n")
+  say("  dropped Name, Ticket, Cabin (free text, Cabin mostly missing)\n")
 
-  cat("  filled", sum(is.na(df$Age)), "missing Age with the median for their title\n")
+  say("  filled", sum(is.na(df$Age)), "missing Age with the median for their title\n")
   df <- df %>%
-    left_join(age_by_title, by = "Title") %>%
+    left_join(fills$age_by_title, by = "Title") %>%
     mutate(Age = coalesce(Age, title_age)) %>%
     select(-title_age)
 
   # Title is only used for the age fill and this flag, since Mr/Mrs/Miss just repeat Sex
   df <- df %>% mutate(IsBoy = as.integer(Title == "Master")) %>% select(-Title)
-  cat("  added IsBoy (1 if title is Master):", sum(df$IsBoy), "rows, then dropped Title\n")
+  say("  added IsBoy (1 if title is Master):", sum(df$IsBoy), "rows, then dropped Title\n")
 
-  cat("  filled", sum(is.na(df$Fare)), "missing Fare with", fare_median, "\n")
-  df <- df %>% mutate(Fare = coalesce(Fare, fare_median))
+  say("  filled", sum(is.na(df$Fare)), "missing Fare with", fills$fare_median, "\n")
+  df <- df %>% mutate(Fare = coalesce(Fare, fills$fare_median))
 
-  cat("  filled", sum(is.na(df$Embarked)), "missing Embarked with", embarked_mode, "\n")
-  df <- df %>% mutate(Embarked = coalesce(Embarked, embarked_mode))
+  say("  filled", sum(is.na(df$Embarked)), "missing Embarked with", fills$embarked_mode, "\n")
+  df <- df %>% mutate(Embarked = coalesce(Embarked, fills$embarked_mode))
 
   df <- df %>% mutate(Sex = ifelse(Sex == "female", 1, 0))
-  cat("  coded Sex as male = 0, female = 1\n")
+  say("  coded Sex as male = 0, female = 1\n")
 
   # same levels everywhere so glm makes the same 0/1 columns for every dataset
   df <- df %>% mutate(Embarked = factor(Embarked, levels = c("C", "Q", "S")))
-  cat("  made Embarked a factor with levels C, Q, S (glm turns it into 0/1 columns, C is the baseline)\n")
+  say("  made Embarked a factor with levels C, Q, S (glm turns it into 0/1 columns, C is the baseline)\n")
 
-  cat("  missing values left:", sum(is.na(df)), "\n")
-  cat("  final shape", nrow(df), "x", ncol(df), "\n")
+  say("  missing values left:", sum(is.na(df)), "\n")
+  say("  final shape", nrow(df), "x", ncol(df), "\n")
   df
 }
 
 section("Step 14 (R): clean the training and held-out rows")
-train_clean <- clean(train_part, "training rows")
-holdout_clean <- clean(holdout_part, "held-out rows")
+train_clean <- clean(train_part, "training rows", fills)
+holdout_clean <- clean(holdout_part, "held-out rows", fills)
 
 # FamilySize replaces SibSp and Parch
 model_formula <- Survived ~ Pclass + Sex + IsBoy + Age + FamilySize + Fare + HasCabin + Embarked
@@ -129,6 +138,13 @@ predict_class <- function(model, df) {
   as.integer(predict(model, newdata = df, type = "response") > 0.5)
 }
 
+# auc: share of (survivor, non-survivor) pairs where the survivor gets the higher score, ties count half
+auc_score <- function(actual, prob) {
+  pos <- prob[actual == 1]
+  neg <- prob[actual == 0]
+  mean(outer(pos, neg, ">") + 0.5 * outer(pos, neg, "=="))
+}
+
 # accuracy alone hides what kind of mistakes the model makes, so print the other metrics too
 print_metrics <- function(model, df, name) {
   actual <- df$Survived
@@ -141,10 +157,7 @@ print_metrics <- function(model, df, name) {
   precision <- tp / (tp + fp)
   recall <- tp / (tp + fn)
   f1 <- 2 * precision * recall / (precision + recall)
-  # auc: share of (survivor, non-survivor) pairs where the survivor gets the higher score, ties count half
-  pos <- prob[actual == 1]
-  neg <- prob[actual == 0]
-  auc <- mean(outer(pos, neg, ">") + 0.5 * outer(pos, neg, "=="))
+  auc <- auc_score(actual, prob)
 
   cat(sprintf("%s accuracy: %.3f\n", name, mean(pred == actual)))
   cat("\nconfusion matrix:\n")
@@ -167,7 +180,7 @@ test <- read_csv("data/test.csv", show_col_types = FALSE)
 cat("test.csv shape:", nrow(test), "rows,", ncol(test), "cols\n")
 cat("missing values per column:\n")
 print(colSums(is.na(test)))
-test_clean <- clean(test, "test.csv")
+test_clean <- clean(test, "test.csv", fills)
 test_pred <- predict_class(model, test_clean)
 cat("\npredicted survivors: ", sum(test_pred), " of ", length(test_pred),
     " (", round(mean(test_pred), 3), ")\n", sep = "")
@@ -183,3 +196,24 @@ cat("\n")
 print_metrics(model, holdout_clean, "held-out test")
 baseline_acc <- mean(holdout_clean$Sex == holdout_clean$Survived)
 cat(sprintf("\nfor comparison, guessing every woman survived and every man died: %.3f accuracy\n", baseline_acc))
+
+# extra: 5-fold cross-validation on all of train.csv, a steadier estimate than one 80/20 split
+# fold k = every 5th passenger by PassengerId within survivors and non-survivors, starting at k
+# (fold 5 is the hold-out set above), same folds as the Python script
+section("Extra (R): 5-fold cross-validation on train.csv")
+cv_acc <- c()
+cv_auc <- c()
+for (k in 0:4) {
+  fit_rows <- train %>% filter(position %% 5 != k) %>% select(-position)
+  check_rows <- train %>% filter(position %% 5 == k) %>% select(-position)
+  fold_fills <- get_fill_values(fit_rows)
+  fold_model <- glm(model_formula, data = clean(fit_rows, "", fold_fills, verbose = FALSE), family = binomial)
+  check_clean <- clean(check_rows, "", fold_fills, verbose = FALSE)
+  prob <- predict(fold_model, newdata = check_clean, type = "response")
+  cv_acc <- c(cv_acc, mean(as.integer(prob > 0.5) == check_clean$Survived))
+  cv_auc <- c(cv_auc, auc_score(check_clean$Survived, prob))
+  cat(sprintf("fold %d: %d rows to fit, %d to check, accuracy %.3f, roc auc %.3f\n",
+              k + 1, nrow(fit_rows), nrow(check_rows), tail(cv_acc, 1), tail(cv_auc, 1)))
+}
+cat(sprintf("\ncross-validated accuracy: %.3f (sd %.3f)\n", mean(cv_acc), sd(cv_acc)))
+cat(sprintf("cross-validated roc auc:  %.3f (sd %.3f)\n", mean(cv_auc), sd(cv_auc)))
