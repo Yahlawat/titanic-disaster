@@ -1,7 +1,6 @@
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
-from sklearn.model_selection import train_test_split
 
 pd.set_option("display.width", 120)
 
@@ -31,10 +30,15 @@ print("\nsurvival rate by class:")
 print(train.groupby("Pclass")["Survived"].mean().round(3))
 
 # test.csv has no Survived column, so hold out 20% of train.csv to measure accuracy on unseen rows
+# rule: every 5th passenger (by PassengerId) among survivors and among non-survivors is held out
+# the R script uses the same rule, so both hold out the exact same rows
 section("Step 14: hold out 20% of train.csv for testing")
-train_part, holdout_part = train_test_split(
-    train, test_size=0.2, random_state=42, stratify=train["Survived"]
-)
+train = train.sort_values("PassengerId").reset_index(drop=True)
+position = train.groupby("Survived").cumcount()
+is_holdout = position % 5 == 4
+holdout_part = train[is_holdout]
+train_part = train[~is_holdout]
+print("held out every 5th passenger by PassengerId, separately for survivors and non-survivors")
 print("training rows:", len(train_part))
 print("held-out rows:", len(holdout_part))
 print(
@@ -87,11 +91,13 @@ section("Step 14: clean the training and held-out rows")
 train_clean = clean(train_part, "training rows")
 holdout_clean = clean(holdout_part, "held-out rows")
 
+# Embarked_C is left out as the baseline (same as R), otherwise the 3 port columns always add up to 1
 features = [
     "Pclass", "Sex", "Age", "SibSp", "Parch", "Fare", "HasCabin",
-    "Embarked_C", "Embarked_Q", "Embarked_S",
+    "Embarked_Q", "Embarked_S",
 ]
 print("\nfeatures used in the model:", features)
+print("Embarked_C left out as the baseline port")
 
 # reindex so every dataset has the same columns in the same order
 X_train = train_clean.reindex(columns=features, fill_value=0)
@@ -101,7 +107,8 @@ y_holdout = holdout_clean["Survived"]
 
 # step 15: logistic regression
 section("Step 15: fit a logistic regression")
-model = LogisticRegression(max_iter=1000)
+# no penalty, so it's the same model as R's glm
+model = LogisticRegression(penalty=None, max_iter=5000)
 model.fit(X_train, y_train)
 print("model fit on", X_train.shape[0], "rows and", X_train.shape[1], "features")
 coefs = pd.Series(model.coef_[0], index=features).sort_values()
