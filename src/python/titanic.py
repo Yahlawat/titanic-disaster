@@ -1,6 +1,8 @@
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import (
+    accuracy_score, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score,
+)
 
 pd.set_option("display.width", 120)
 
@@ -136,10 +138,27 @@ print("\ncoefficients (log-odds, + means more likely to survive):")
 print(coefs.round(3))
 print(f"intercept: {model.intercept_[0]:.3f}")
 
+
+
+# accuracy alone hides what kind of mistakes the model makes, so print the other metrics too
+def print_metrics(X, y, name):
+    pred = model.predict(X)
+    prob = model.predict_proba(X)[:, 1]
+    tn, fp, fn, tp = confusion_matrix(y, pred).ravel()
+    print(f"{name} accuracy: {accuracy_score(y, pred):.3f}")
+    print("\nconfusion matrix:")
+    print("                   predicted died  predicted survived")
+    print(f"  actually died    {tn:14d}  {fp:18d}")
+    print(f"  actually survived{fn:14d}  {tp:18d}")
+    print(f"\nprecision: {precision_score(y, pred):.3f}  (of those predicted to survive, share who did)")
+    print(f"recall:    {recall_score(y, pred):.3f}  (of those who survived, share the model caught)")
+    print(f"f1:        {f1_score(y, pred):.3f}  (balance of precision and recall)")
+    print(f"roc auc:   {roc_auc_score(y, prob):.3f}  (chance a survivor gets a higher score than a non-survivor)")
+
+
 # step 16: training accuracy
 section("Step 16: accuracy on the training set")
-train_acc = accuracy_score(y_train, model.predict(X_train))
-print(f"training accuracy: {train_acc:.3f}")
+print_metrics(X_train, y_train, "training")
 
 # step 17: test.csv
 section("Step 17: load test.csv and predict")
@@ -160,7 +179,7 @@ print("saved predictions to data/predictions_python.csv")
 section("Step 18: accuracy on the test set")
 print("test.csv has no Survived column, so its accuracy can't be measured here.")
 print("the 20% of train.csv held out in step 14 is used as the test set instead.")
-holdout_acc = accuracy_score(y_holdout, model.predict(X_holdout))
-print(f"\nheld-out test accuracy: {holdout_acc:.3f}")
+print()
+print_metrics(X_holdout, y_holdout, "held-out test")
 baseline_acc = accuracy_score(y_holdout, X_holdout["Sex"])
-print(f"for comparison, guessing every woman survived and every man died: {baseline_acc:.3f}")
+print(f"\nfor comparison, guessing every woman survived and every man died: {baseline_acc:.3f} accuracy")

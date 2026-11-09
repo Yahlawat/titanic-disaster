@@ -129,10 +129,37 @@ predict_class <- function(model, df) {
   as.integer(predict(model, newdata = df, type = "response") > 0.5)
 }
 
+# accuracy alone hides what kind of mistakes the model makes, so print the other metrics too
+print_metrics <- function(model, df, name) {
+  actual <- df$Survived
+  prob <- predict(model, newdata = df, type = "response")
+  pred <- as.integer(prob > 0.5)
+  tn <- sum(pred == 0 & actual == 0)
+  fp <- sum(pred == 1 & actual == 0)
+  fn <- sum(pred == 0 & actual == 1)
+  tp <- sum(pred == 1 & actual == 1)
+  precision <- tp / (tp + fp)
+  recall <- tp / (tp + fn)
+  f1 <- 2 * precision * recall / (precision + recall)
+  # auc: share of (survivor, non-survivor) pairs where the survivor gets the higher score, ties count half
+  pos <- prob[actual == 1]
+  neg <- prob[actual == 0]
+  auc <- mean(outer(pos, neg, ">") + 0.5 * outer(pos, neg, "=="))
+
+  cat(sprintf("%s accuracy: %.3f\n", name, mean(pred == actual)))
+  cat("\nconfusion matrix:\n")
+  cat("                   predicted died  predicted survived\n")
+  cat(sprintf("  actually died    %14d  %18d\n", tn, fp))
+  cat(sprintf("  actually survived%14d  %18d\n", fn, tp))
+  cat(sprintf("\nprecision: %.3f  (of those predicted to survive, share who did)\n", precision))
+  cat(sprintf("recall:    %.3f  (of those who survived, share the model caught)\n", recall))
+  cat(sprintf("f1:        %.3f  (balance of precision and recall)\n", f1))
+  cat(sprintf("roc auc:   %.3f  (chance a survivor gets a higher score than a non-survivor)\n", auc))
+}
+
 # step 16 again: training accuracy
 section("Step 16 (R): accuracy on the training set")
-train_acc <- mean(predict_class(model, train_clean) == train_clean$Survived)
-cat("training accuracy:", round(train_acc, 3), "\n")
+print_metrics(model, train_clean, "training")
 
 # step 17 again: test.csv
 section("Step 17 (R): load test.csv and predict")
@@ -152,7 +179,7 @@ cat("saved predictions to data/predictions_r.csv\n")
 section("Step 18 (R): accuracy on the test set")
 cat("test.csv has no Survived column, so its accuracy can't be measured here.\n")
 cat("the 20% of train.csv held out in step 14 is used as the test set instead.\n")
-holdout_acc <- mean(predict_class(model, holdout_clean) == holdout_clean$Survived)
-cat("\nheld-out test accuracy:", round(holdout_acc, 3), "\n")
+cat("\n")
+print_metrics(model, holdout_clean, "held-out test")
 baseline_acc <- mean(holdout_clean$Sex == holdout_clean$Survived)
-cat("for comparison, guessing every woman survived and every man died:", round(baseline_acc, 3), "\n")
+cat(sprintf("\nfor comparison, guessing every woman survived and every man died: %.3f accuracy\n", baseline_acc))
