@@ -28,10 +28,17 @@ cat("\nsurvival rate by class:\n")
 print(train %>% group_by(Pclass) %>% summarise(survival_rate = round(mean(Survived), 3)))
 
 # test.csv has no Survived column, so hold out 20% of train.csv to measure accuracy on unseen rows
+# rule: every 5th passenger (by PassengerId) among survivors and among non-survivors is held out
+# the Python script uses the same rule, so both hold out the exact same rows
 section("Step 14 (R): hold out 20% of train.csv for testing")
-set.seed(42)
-holdout_part <- train %>% group_by(Survived) %>% slice_sample(prop = 0.2) %>% ungroup()
-train_part <- train %>% anti_join(holdout_part, by = "PassengerId")
+train <- train %>%
+  arrange(PassengerId) %>%
+  group_by(Survived) %>%
+  mutate(position = row_number() - 1) %>%
+  ungroup()
+holdout_part <- train %>% filter(position %% 5 == 4) %>% select(-position)
+train_part <- train %>% filter(position %% 5 != 4) %>% select(-position)
+cat("held out every 5th passenger by PassengerId, separately for survivors and non-survivors\n")
 cat("training rows:", nrow(train_part), "\n")
 cat("held-out rows:", nrow(holdout_part), "\n")
 cat("survival rate training / held-out:",
