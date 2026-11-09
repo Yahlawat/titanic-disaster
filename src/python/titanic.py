@@ -46,14 +46,22 @@ print(
     f"{train_part['Survived'].mean():.3f} / {holdout_part['Survived'].mean():.3f}"
 )
 
+# title from the name, e.g. "Braund, Mr. Owen Harris" -> Mr
+# rare titles (Dr, Rev, Col, Countess, ...) grouped as Other
+def get_title(names):
+    title = names.str.extract(r",\s*([^.]+)\.")[0].str.strip()
+    title = title.replace({"Mlle": "Miss", "Ms": "Miss", "Mme": "Mrs"})
+    return title.where(title.isin(["Mr", "Mrs", "Miss", "Master"]), "Other")
+
+
 # fill values come from the training rows only, so nothing leaks in from held-out or test
-age_median = train_part["Age"].median()
+# age is filled with the median for that title (a Master is a boy, a Mr is an adult man)
+age_by_title = train_part.assign(Title=get_title(train_part["Name"])).groupby("Title")["Age"].median()
 fare_median = train_part["Fare"].median()
 embarked_mode = train_part["Embarked"].mode()[0]
-print(
-    f"\nfill values from the training rows: Age median = {age_median}, "
-    f"Fare median = {fare_median}, Embarked mode = {embarked_mode}"
-)
+print("\nfill values from the training rows:")
+print("  median Age by title:", age_by_title.to_dict())
+print(f"  Fare median = {fare_median}, Embarked mode = {embarked_mode}")
 
 
 # same changes for every dataset
@@ -64,11 +72,22 @@ def clean(df, name):
     df["HasCabin"] = df["Cabin"].notna().astype(int)
     print(f"  added HasCabin (1 if cabin known): {df['HasCabin'].sum()} of {len(df)} rows")
 
+    df["Title"] = get_title(df["Name"])
+    print("  added Title from Name:", df["Title"].value_counts().to_dict())
+
+    df["FamilySize"] = df["SibSp"] + df["Parch"] + 1
+    print(f"  added FamilySize = SibSp + Parch + 1 (range {df['FamilySize'].min()} to {df['FamilySize'].max()})")
+
     df = df.drop(columns=["Name", "Ticket", "Cabin"])
     print("  dropped Name, Ticket, Cabin (free text, Cabin mostly missing)")
 
-    print(f"  filled {df['Age'].isna().sum()} missing Age with {age_median}")
-    df["Age"] = df["Age"].fillna(age_median)
+    print(f"  filled {df['Age'].isna().sum()} missing Age with the median for their title")
+    df["Age"] = df["Age"].fillna(df["Title"].map(age_by_title))
+
+    # Title is only used for the age fill and this flag, since Mr/Mrs/Miss just repeat Sex
+    df["IsBoy"] = (df["Title"] == "Master").astype(int)
+    df = df.drop(columns=["Title"])
+    print(f"  added IsBoy (1 if title is Master): {df['IsBoy'].sum()} rows, then dropped Title")
 
     print(f"  filled {df['Fare'].isna().sum()} missing Fare with {fare_median}")
     df["Fare"] = df["Fare"].fillna(fare_median)
@@ -79,7 +98,7 @@ def clean(df, name):
     df["Sex"] = df["Sex"].map({"male": 0, "female": 1})
     print("  coded Sex as male = 0, female = 1")
 
-    df = pd.get_dummies(df, columns=["Embarked"], prefix="Embarked", dtype=int)
+    df = pd.get_dummies(df, columns=["Embarked"], dtype=int)
     print("  turned Embarked into 0/1 columns:", [c for c in df.columns if c.startswith("Embarked_")])
 
     print(f"  missing values left: {df.isna().sum().sum()}")
@@ -92,8 +111,9 @@ train_clean = clean(train_part, "training rows")
 holdout_clean = clean(holdout_part, "held-out rows")
 
 # Embarked_C is left out as the baseline (same as R), otherwise the 3 port columns always add up to 1
+# FamilySize replaces SibSp and Parch
 features = [
-    "Pclass", "Sex", "Age", "SibSp", "Parch", "Fare", "HasCabin",
+    "Pclass", "Sex", "IsBoy", "Age", "FamilySize", "Fare", "HasCabin",
     "Embarked_Q", "Embarked_S",
 ]
 print("\nfeatures used in the model:", features)
@@ -107,8 +127,8 @@ y_holdout = holdout_clean["Survived"]
 
 # step 15: logistic regression
 section("Step 15: fit a logistic regression")
-# no penalty, so it's the same model as R's glm
-model = LogisticRegression(penalty=None, max_iter=5000)
+# no penalty and a tight tolerance, so it fits the same model as R's glm
+model = LogisticRegression(penalty=None, tol=1e-8, max_iter=5000)
 model.fit(X_train, y_train)
 print("model fit on", X_train.shape[0], "rows and", X_train.shape[1], "features")
 coefs = pd.Series(model.coef_[0], index=features).sort_values()

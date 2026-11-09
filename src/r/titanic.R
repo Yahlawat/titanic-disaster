@@ -44,12 +44,25 @@ cat("held-out rows:", nrow(holdout_part), "\n")
 cat("survival rate training / held-out:",
     round(mean(train_part$Survived), 3), "/", round(mean(holdout_part$Survived), 3), "\n")
 
+# title from the name, e.g. "Braund, Mr. Owen Harris" -> Mr
+# rare titles (Dr, Rev, Col, Countess, ...) grouped as Other
+get_title <- function(names) {
+  title <- trimws(sub("^[^,]*,\\s*([^.]+)\\..*$", "\\1", names))
+  title <- recode(title, Mlle = "Miss", Ms = "Miss", Mme = "Mrs")
+  ifelse(title %in% c("Mr", "Mrs", "Miss", "Master"), title, "Other")
+}
+
 # fill values come from the training rows only, so nothing leaks in from held-out or test
-age_median <- median(train_part$Age, na.rm = TRUE)
+# age is filled with the median for that title (a Master is a boy, a Mr is an adult man)
+age_by_title <- train_part %>%
+  mutate(Title = get_title(Name)) %>%
+  group_by(Title) %>%
+  summarise(title_age = median(Age, na.rm = TRUE))
 fare_median <- median(train_part$Fare, na.rm = TRUE)
 embarked_mode <- names(which.max(table(train_part$Embarked)))
-cat("\nfill values from the training rows: Age median = ", age_median,
-    ", Fare median = ", round(fare_median, 4), ", Embarked mode = ", embarked_mode, "\n", sep = "")
+cat("\nfill values from the training rows:\n")
+cat("  median Age by title:", paste(age_by_title$Title, age_by_title$title_age, sep = " = ", collapse = ", "), "\n")
+cat("  Fare median = ", round(fare_median, 4), ", Embarked mode = ", embarked_mode, "\n", sep = "")
 
 # same changes for every dataset
 clean <- function(df, name) {
@@ -58,11 +71,25 @@ clean <- function(df, name) {
   df <- df %>% mutate(HasCabin = as.integer(!is.na(Cabin)))
   cat("  added HasCabin (1 if cabin known):", sum(df$HasCabin), "of", nrow(df), "rows\n")
 
+  df <- df %>% mutate(Title = get_title(Name))
+  title_counts <- table(df$Title)
+  cat("  added Title from Name:", paste(names(title_counts), title_counts, sep = " = ", collapse = ", "), "\n")
+
+  df <- df %>% mutate(FamilySize = SibSp + Parch + 1)
+  cat("  added FamilySize = SibSp + Parch + 1 (range ", min(df$FamilySize), " to ", max(df$FamilySize), ")\n", sep = "")
+
   df <- df %>% select(-Name, -Ticket, -Cabin)
   cat("  dropped Name, Ticket, Cabin (free text, Cabin mostly missing)\n")
 
-  cat("  filled", sum(is.na(df$Age)), "missing Age with", age_median, "\n")
-  df <- df %>% mutate(Age = coalesce(Age, age_median))
+  cat("  filled", sum(is.na(df$Age)), "missing Age with the median for their title\n")
+  df <- df %>%
+    left_join(age_by_title, by = "Title") %>%
+    mutate(Age = coalesce(Age, title_age)) %>%
+    select(-title_age)
+
+  # Title is only used for the age fill and this flag, since Mr/Mrs/Miss just repeat Sex
+  df <- df %>% mutate(IsBoy = as.integer(Title == "Master")) %>% select(-Title)
+  cat("  added IsBoy (1 if title is Master):", sum(df$IsBoy), "rows, then dropped Title\n")
 
   cat("  filled", sum(is.na(df$Fare)), "missing Fare with", fare_median, "\n")
   df <- df %>% mutate(Fare = coalesce(Fare, fare_median))
@@ -86,7 +113,8 @@ section("Step 14 (R): clean the training and held-out rows")
 train_clean <- clean(train_part, "training rows")
 holdout_clean <- clean(holdout_part, "held-out rows")
 
-model_formula <- Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + HasCabin + Embarked
+# FamilySize replaces SibSp and Parch
+model_formula <- Survived ~ Pclass + Sex + IsBoy + Age + FamilySize + Fare + HasCabin + Embarked
 cat("\nmodel formula:", deparse(model_formula, width.cutoff = 500), "\n")
 
 # step 15 again: logistic regression
