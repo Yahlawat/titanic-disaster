@@ -1,0 +1,20 @@
+# Data (download it yourself, see README)
+src/data/*
+!src/data/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+.env
