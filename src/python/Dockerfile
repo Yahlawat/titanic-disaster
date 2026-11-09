@@ -1,4 +1,3 @@
-# Step 12: Dockerfile that installs requirements.txt and runs the .py script
 FROM python:3.13.13-slim
 
 WORKDIR /app
